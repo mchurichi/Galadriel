@@ -1,0 +1,4 @@
+namespace: spire-two
+trustDomain: two.org
+caTTL: 1h
+socketPath: /tmp/spire-server/private/spire-two.sock

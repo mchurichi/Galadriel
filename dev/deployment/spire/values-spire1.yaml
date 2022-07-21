@@ -1,0 +1,4 @@
+namespace: spire-one
+trustDomain: one.org
+caTTL: 1h
+socketPath: /tmp/spire-server/private/spire-one.sock
