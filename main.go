@@ -7,106 +7,64 @@ import (
 	"path/filepath"
 
 	"github.com/spiffe/go-spiffe/v2/bundle/spiffebundle"
-	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/spire-controller-manager/pkg/spireapi"
 	"google.golang.org/grpc"
 )
 
-var spire1Socket = "/Users/mchurichi/Documents/scytale/src/spire/api1.sock"
-var spire2Socket = "/Users/mchurichi/Documents/scytale/src/spire/api2.sock"
+var spire1Socket = "/workspaces/Galadriel/dev/deployment/spire/spire1.sock"
+var spire2Socket = "/workspaces/Galadriel/dev/deployment/spire/spire2.sock"
 
 func main() {
-	client1, err := dialSocket(context.Background(), spire1Socket)
-	if err != nil {
-		panic(err)
-	}
-	client2, err := dialSocket(context.Background(), spire2Socket)
-	if err != nil {
-		panic(err)
-	}
 
-	// Get Trust Domain Bundle from SPIRE 1
-	bundle1, err := getBundle(context.Background(), client1)
+	spire1 := newSpireServer(spire1Socket)
+	spire2 := newSpireServer(spire2Socket)
+
+	// SPIRE Server 1
+
+	bundle1, err := spire1.GetBundle()
 	if err != nil {
 		panic(err)
 	}
-	x509bundle1 := bundle1.X509Bundle()
-	pemBundle1, err := x509bundle1.Marshal()
-	if err != nil {
-		panic(err)
-	}
+	pemBundle1, _ := bundle1.X509Bundle().Marshal()
+
+	fmt.Println("Trust Domain 1:", bundle1.TrustDomain())
 	fmt.Println("Bundle:")
-	fmt.Println("Trust Domain:", x509bundle1.TrustDomain())
 	fmt.Println(string(pemBundle1))
 
-	// Get Trust Domain Bundle from SPIRE 2
-	bundle2, err := getBundle(context.Background(), client2)
+	// SPIRE Server 2
+
+	bundle2, err := spire2.GetBundle()
 	if err != nil {
 		panic(err)
 	}
-	x509bundle2 := bundle2.X509Bundle()
-	pemBundle2, err := x509bundle2.Marshal()
-	if err != nil {
-		panic(err)
-	}
+	pemBundle2, _ := bundle2.X509Bundle().Marshal()
+
+	fmt.Println("Trust Domain 2:", bundle2.TrustDomain())
 	fmt.Println("Bundle:")
-	fmt.Println("Trust Domain:", x509bundle2.TrustDomain())
 	fmt.Println(string(pemBundle2))
 
-	// List federation relationships
-	feds, err := listFederationRelationships(context.Background(), client1)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Federation Relationships:")
-	fmt.Println(feds)
+	// Federate SPIRE 1 with SPIRE 2
 
-	// Create SPIRE 1 federation relationship
-	spire2SpiffeID, err := spiffeid.FromString("spiffe://two.org/spire/server")
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println("Creating federation relationship with spiffe://two.org/spire/server")
-	status1, err := client1.CreateFederationRelationships(context.Background(), []spireapi.FederationRelationship{
-		{
-			TrustDomain:       x509bundle2.TrustDomain(),
-			TrustDomainBundle: bundle2,
-			BundleEndpointURL: "https://localhost:8442",
-			BundleEndpointProfile: spireapi.HTTPSSPIFFEProfile{
-				EndpointSPIFFEID: spire2SpiffeID,
-			},
-		},
-	})
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Creation status:", status1)
-	fmt.Println(status1)
-
-	// List federation relationships
-	feds, err = listFederationRelationships(context.Background(), client1)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Federation Relationships:")
-	fmt.Println(feds)
+	spire1.CreateFederationRelationship(bundle2)
 }
 
-func listFederationRelationships(ctx context.Context, client Client) ([]spireapi.FederationRelationship, error) {
-	feds, err := client.ListFederationRelationships(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list federation relationships: %w", err)
-	}
-	return feds, nil
+type Client interface {
+	spireapi.TrustDomainClient
+	spireapi.BundleClient
 }
 
-func getBundle(ctx context.Context, client Client) (*spiffebundle.Bundle, error) {
-	bundle, err := client.GetBundle(ctx)
+type spireServer struct {
+	client Client
+}
+
+func newSpireServer(socketPath string) *spireServer {
+	client, err := dialSocket(context.Background(), socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get bundle: %w", err)
+		panic(err)
 	}
-	return bundle, nil
+	return &spireServer{
+		client: client,
+	}
 }
 
 func dialSocket(ctx context.Context, path string) (Client, error) {
@@ -132,7 +90,42 @@ func dialSocket(ctx context.Context, path string) (Client, error) {
 	}, nil
 }
 
-type Client interface {
-	spireapi.TrustDomainClient
-	spireapi.BundleClient
+func (s *spireServer) GetBundle() (*spiffebundle.Bundle, error) {
+	bundle, err := s.client.GetBundle(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bundle: %w", err)
+	}
+	return bundle, nil
+}
+
+func (s *spireServer) GetFederationRelationships() ([]spireapi.FederationRelationship, error) {
+	feds, err := s.client.ListFederationRelationships(context.TODO())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list federation relationships: %w", err)
+	}
+	return feds, nil
+}
+
+func (s *spireServer) CreateFederationRelationship(bundle *spiffebundle.Bundle) (*spireapi.Status, error) {
+	x509bundle := bundle.X509Bundle()
+
+	fmt.Println("Creating federation relationship with", bundle.TrustDomain().ID())
+	spireSpiffeId, _ := bundle.TrustDomain().ID().AppendPath("/spire/server")
+
+	status, err := s.client.CreateFederationRelationships(context.TODO(), []spireapi.FederationRelationship{
+		{
+			TrustDomain:       x509bundle.TrustDomain(),
+			TrustDomainBundle: bundle,
+			BundleEndpointURL: "https://localhost:8442",
+			BundleEndpointProfile: spireapi.HTTPSSPIFFEProfile{
+				EndpointSPIFFEID: spireSpiffeId,
+			},
+		},
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create federation relationship: %w", err)
+	}
+
+	return &status[0], nil // why many?
 }
