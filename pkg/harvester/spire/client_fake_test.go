@@ -78,6 +78,9 @@ type fakeInternalClient struct {
 	getBundleErr                  error
 	federationRelationships       []*FederationRelationship
 	getFederationRelationshipsErr error
+	// createFederationRelationshipsErr error
+	// updateFederationRelationshipsErr error
+	// deleteFederationRelationshipsErr error
 }
 
 func (c fakeInternalClient) GetBundle(context.Context) (*spiffebundle.Bundle, error) {
@@ -109,8 +112,14 @@ func (c fakeInternalClient) DeleteFederationRelationships(context.Context, []*sp
 }
 
 type fakeSpireTrustDomainClient struct {
-	federationRelationships               []*types.FederationRelationship
-	batchListFederationRelationshipsError error
+	federationRelationships                    []*types.FederationRelationship
+	batchListFederationRelationshipsError      error
+	batchCreateFederationRelationshipsReponse  *trustdomainv1.BatchCreateFederationRelationshipResponse
+	batchCreateFederationRelationshipsError    error
+	batchUpdateFederationRelationshipsReponse  *trustdomainv1.BatchUpdateFederationRelationshipResponse
+	batchUpdateFederationRelationshipsError    error
+	batchDeleteFederationRelationshipsResponse *trustdomainv1.BatchDeleteFederationRelationshipResponse
+	batchDeleteFederationRelationshipsError    error
 }
 
 func (c fakeSpireTrustDomainClient) ListFederationRelationships(ctx context.Context, in *trustdomainv1.ListFederationRelationshipsRequest, opts ...grpc.CallOption) (*trustdomainv1.ListFederationRelationshipsResponse, error) {
@@ -149,21 +158,30 @@ func (c fakeSpireTrustDomainClient) ListFederationRelationships(ctx context.Cont
 }
 
 func (c fakeSpireTrustDomainClient) GetFederationRelationship(ctx context.Context, in *trustdomainv1.GetFederationRelationshipRequest, opts ...grpc.CallOption) (*types.FederationRelationship, error) {
-	return nil, errors.New("not implemented")
+	return nil, nil
 }
 
 func (c fakeSpireTrustDomainClient) BatchCreateFederationRelationship(ctx context.Context, in *trustdomainv1.BatchCreateFederationRelationshipRequest, opts ...grpc.CallOption) (*trustdomainv1.BatchCreateFederationRelationshipResponse, error) {
-	return nil, errors.New("not implemented")
+	if c.batchCreateFederationRelationshipsError != nil {
+		return nil, c.batchCreateFederationRelationshipsError
+	}
+	return c.batchCreateFederationRelationshipsReponse, nil
 }
 
 func (c fakeSpireTrustDomainClient) BatchUpdateFederationRelationship(ctx context.Context, in *trustdomainv1.BatchUpdateFederationRelationshipRequest, opts ...grpc.CallOption) (*trustdomainv1.BatchUpdateFederationRelationshipResponse, error) {
-	return nil, errors.New("not implemented")
+	if c.batchUpdateFederationRelationshipsError != nil {
+		return nil, c.batchUpdateFederationRelationshipsError
+	}
+	return c.batchUpdateFederationRelationshipsReponse, nil
 }
 
 func (c fakeSpireTrustDomainClient) BatchDeleteFederationRelationship(ctx context.Context, in *trustdomainv1.BatchDeleteFederationRelationshipRequest, opts ...grpc.CallOption) (*trustdomainv1.BatchDeleteFederationRelationshipResponse, error) {
-	return nil, errors.New("not implemented")
+	if c.batchDeleteFederationRelationshipsError != nil {
+		return nil, c.batchDeleteFederationRelationshipsError
+	}
+	return c.batchDeleteFederationRelationshipsResponse, nil
 }
 
 func (c fakeSpireTrustDomainClient) RefreshBundle(ctx context.Context, in *trustdomainv1.RefreshBundleRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	return nil, errors.New("not implemented")
+	return nil, nil
 }

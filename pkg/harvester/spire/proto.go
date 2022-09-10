@@ -10,6 +10,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	trustdomainv1 "github.com/spiffe/spire-api-sdk/proto/spire/api/server/trustdomain/v1"
 	apitypes "github.com/spiffe/spire-api-sdk/proto/spire/api/types"
+	"google.golang.org/grpc/codes"
 )
 
 func protoToBundle(in *apitypes.Bundle) (*spiffebundle.Bundle, error) {
@@ -75,6 +76,192 @@ func protoToJWTAuthorities(in []*apitypes.JWTKey) (map[string]crypto.PublicKey, 
 	return out, nil
 }
 
+func federationRelationshipsToProto(in []*FederationRelationship) ([]*apitypes.FederationRelationship, error) {
+	var out []*apitypes.FederationRelationship
+
+	for _, inRel := range in {
+		bundle, err := bundleToProto(inRel.TrustDomainBundle)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert trust domain bundle to proto: %v", err)
+		}
+
+		if inRel.BundleEndpointURL == "" {
+			return nil, fmt.Errorf("bundle endpoint url must be set")
+		}
+
+		outRel := &apitypes.FederationRelationship{
+			TrustDomain:       inRel.TrustDomain.String(),
+			BundleEndpointUrl: inRel.BundleEndpointURL,
+			TrustDomainBundle: bundle,
+		}
+
+		if inRel.BundleEndpointProfile == nil {
+			return nil, fmt.Errorf("bundle endpoint profile must be set")
+		}
+
+		switch inRel.BundleEndpointProfile.(type) {
+		case HTTPSWebBundleEndpointProfile:
+			outRel.BundleEndpointProfile = &apitypes.FederationRelationship_HttpsWeb{
+				HttpsWeb: &apitypes.HTTPSWebProfile{},
+			}
+		case HTTPSSpiffeBundleEndpointProfile:
+			outRel.BundleEndpointProfile = &apitypes.FederationRelationship_HttpsSpiffe{
+				HttpsSpiffe: &apitypes.HTTPSSPIFFEProfile{
+					EndpointSpiffeId: inRel.BundleEndpointProfile.(HTTPSSpiffeBundleEndpointProfile).SpiffeID.String(),
+				},
+			}
+		default:
+			return nil, fmt.Errorf("unsupported bundle endpoint profile for trust domain %s: %T", bundle.GetTrustDomain(), inRel.BundleEndpointProfile)
+		}
+
+		out = append(out, outRel)
+
+	}
+
+	return out, nil
+}
+
+func bundleToProto(in *spiffebundle.Bundle) (*apitypes.Bundle, error) {
+	if in == nil {
+		return nil, fmt.Errorf("trust domain bundle must be set")
+	}
+
+	if in.TrustDomain().IsZero() {
+		return nil, fmt.Errorf("trust domain must be set")
+	}
+
+	out := &apitypes.Bundle{
+		TrustDomain: in.TrustDomain().String(),
+	}
+	x509Auths, err := x509AuthoritiesToProto(in.X509Authorities())
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert x509 authorities to proto: %v", err)
+	}
+	out.X509Authorities = x509Auths
+
+	jwtAuths, err := jwtAuthoritiesToProto(in.JWTAuthorities())
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert jwt authorities to proto: %v", err)
+	}
+	out.JwtAuthorities = jwtAuths
+
+	return out, nil
+}
+
+func x509AuthoritiesToProto(in []*x509.Certificate) ([]*apitypes.X509Certificate, error) {
+	var out []*apitypes.X509Certificate
+
+	for _, c := range out {
+		if c.Asn1 == nil || len(c.Asn1) == 0 {
+			return nil, fmt.Errorf("x509 certificate is missing ASN1 data")
+		}
+
+		out = append(out, &apitypes.X509Certificate{Asn1: c.Asn1})
+	}
+
+	return out, nil
+}
+
+func jwtAuthoritiesToProto(in map[string]crypto.PublicKey) ([]*apitypes.JWTKey, error) {
+	var out []*apitypes.JWTKey
+
+	for k, v := range in {
+		if k == "" {
+			return nil, fmt.Errorf("JWT key is missing key id")
+		}
+		pk, err := x509.MarshalPKIXPublicKey(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal public key: %v", err)
+		}
+
+		jwt := &apitypes.JWTKey{
+			PublicKey: pk,
+			KeyId:     k,
+		}
+
+		out = append(out, jwt)
+	}
+
+	return out, nil
+}
+
+// TODO: the next two functions (create and update) are the same but take a different argument.
+// The third function (delete) has minor differences. Refactor to reuse code, probably with interfaces or generics.
+func protoCreateToFederationRelationshipResult(in *trustdomainv1.BatchCreateFederationRelationshipResponse) ([]*FederationRelationshipResult, error) {
+	var out []*FederationRelationshipResult
+
+	for _, r := range in.GetResults() {
+		var frel *FederationRelationship
+		var err error
+
+		if r.Status.Code == int32(codes.OK) {
+			frel, err = protoToFederationsRelationship(r.FederationRelationship)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert federation relationship to proto: %v", err)
+			}
+		}
+
+		rOut := &FederationRelationshipResult{
+			Status: &FederationRelationshipResultStatus{
+				Code:    codes.Code(r.Status.Code),
+				Message: r.Status.Message,
+			},
+			FederationRelationship: frel,
+		}
+		out = append(out, rOut)
+	}
+
+	return out, nil
+}
+
+func protoUpdateToFederationRelationshipResult(in *trustdomainv1.BatchUpdateFederationRelationshipResponse) ([]*FederationRelationshipResult, error) {
+	var out []*FederationRelationshipResult
+
+	for _, r := range in.GetResults() {
+		var frel *FederationRelationship
+		var err error
+
+		if r.Status.Code == int32(codes.OK) {
+			frel, err = protoToFederationsRelationship(r.GetFederationRelationship())
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert federation relationship to proto: %v", err)
+			}
+		}
+
+		rOut := &FederationRelationshipResult{
+			Status: &FederationRelationshipResultStatus{
+				Code:    codes.Code(r.Status.Code),
+				Message: r.Status.Message,
+			},
+			FederationRelationship: frel,
+		}
+		out = append(out, rOut)
+	}
+
+	return out, nil
+}
+
+func protoDeleteToFederationRelationshipResult(in *trustdomainv1.BatchDeleteFederationRelationshipResponse) ([]*FederationRelationshipResult, error) {
+	var out []*FederationRelationshipResult
+
+	for _, r := range in.GetResults() {
+		if r == nil || r.Status == nil {
+			return nil, fmt.Errorf("invalid proto response: %v", r)
+
+		}
+		rOut := &FederationRelationshipResult{
+			Status: &FederationRelationshipResultStatus{
+				Code:        codes.Code(r.Status.Code),
+				Message:     r.Status.Message,
+				TrustDomain: r.GetTrustDomain(),
+			},
+		}
+		out = append(out, rOut)
+	}
+
+	return out, nil
+}
+
 func protoToFederationsRelationships(in *trustdomainv1.ListFederationRelationshipsResponse) ([]*FederationRelationship, error) {
 	var out []*FederationRelationship
 
@@ -129,6 +316,33 @@ func protoToBundleProfile(in *apitypes.FederationRelationship) (BundleEndpointPr
 		}
 	default:
 		return nil, fmt.Errorf("unknown bundle endpoint profile type: %T", in.BundleEndpointProfile)
+	}
+
+	return out, nil
+}
+
+func trustDomainsToStrings(in []*spiffeid.TrustDomain) ([]string, error) {
+	var out []string
+
+	for _, td := range in {
+		if td == nil || td.IsZero() {
+			return nil, fmt.Errorf("invalid trust domain: %v", td)
+		}
+		out = append(out, td.String())
+	}
+
+	return out, nil
+}
+
+func stringsToTrustDomains(in []string) ([]*spiffeid.TrustDomain, error) {
+	var out []*spiffeid.TrustDomain
+
+	for _, v := range in {
+		td, err := spiffeid.TrustDomainFromString(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trust domain: %v", v)
+		}
+		out = append(out, &td)
 	}
 
 	return out, nil
