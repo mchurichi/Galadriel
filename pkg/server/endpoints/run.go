@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/HewlettPackard/galadriel/pkg/common/telemetry"
 	"github.com/HewlettPackard/galadriel/pkg/common/util"
+	harvesterAPI "github.com/HewlettPackard/galadriel/pkg/server/api/harvester"
 	"github.com/HewlettPackard/galadriel/pkg/server/datastore"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -127,7 +129,7 @@ func (e *Endpoints) addHandlers() {
 }
 
 func (e *Endpoints) addTCPHandlers(server *echo.Echo) {
-	server.CONNECT("/onboard", e.onboardHandler)
-	server.POST("/bundle", e.postBundleHandler)
-	server.POST("/bundle/sync", e.syncFederatedBundleHandler)
+	harvesterAPI.RegisterHandlers(server, &HarvesterAPIHandlers{
+		Logger: e.Logger.WithField(telemetry.SubsystemName, telemetry.Endpoints),
+	})
 }
